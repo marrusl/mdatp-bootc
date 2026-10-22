@@ -10,9 +10,11 @@ This is **unofficial**. It is not a Red Hat supported configuration, it is not a
 
 Everything here was built and booted on the **CentOS Stream 9 and CentOS Stream 10 bootc base images**, not on Red Hat Enterprise Linux. Stream was used because it needs no build-time subscription entitlement. The Microsoft package is the same one in both cases, installed from Microsoft's own RHEL 9 and RHEL 10 repositories, but a Stream result is not a RHEL result and should not be read as one. See [Not verified](#not-verified) below.
 
-## What this demonstrates
+Separately from whether the recipe works, whether a bootc-built RHEL host counts as RHEL for Defender support purposes is an open question. Microsoft has published language pointing both ways, and it is laid out under [Microsoft support stance](#microsoft-support-stance) below.
 
-A Containerfile for each RHEL major version:
+## The Containerfiles
+
+One for each RHEL major version:
 
 | File | Base image | Microsoft repo |
 |---|---|---|
@@ -20,23 +22,6 @@ A Containerfile for each RHEL major version:
 | `Containerfile.el10` | `quay.io/centos-bootc/centos-bootc:stream10` | `packages.microsoft.com/config/rhel/10/prod.repo` |
 
 The two are identical apart from the base image, the repo URL, and the GPG key, since the el10 repo is signed with `microsoft-2025.asc` rather than `microsoft.asc`. Both repos served the same package build, `mdatp-101.26081.0010-1.x86_64`, at the time of writing.
-
-### Two layouts of the same recipe
-
-Each version comes in two forms, and they produce the same result:
-
-- **`Containerfile.el9` and `Containerfile.el10` at the repo root** read conventionally. The unit file, the `sysusers.d` entry, the `tmpfiles.d` entry, the seeding script, and the service drop-in are real files under `files/`, pulled in with `COPY`. This is the pair to read and to adapt, because each supporting file is something you can open, review, and change on its own.
-- **`single-file/Containerfile.el9` and `single-file/Containerfile.el10`** generate that same supporting content inline with `printf`. It is uglier to read, and it needs no build context beyond itself, so it can be dropped into an existing build pipeline without also arranging to ship five small files alongside it.
-
-Both forms were built, installed to disk, and booted, and both produced the same end state. Pick on convenience. If you are reading this to understand what Defender needs on bootc, read the root pair.
-
-On a host installed from any of these images and booted:
-
-- `mdatp.service` is active, running `wdavdaemon` out of `/opt/microsoft/mdatp/sbin`.
-- SELinux is in enforcing mode, both Defender policy modules are loaded, and there were no AVC denials across the boot.
-- Real-time protection reports `real_time_protection_subsystem: "fanotify"` and `supplementary_events_subsystem: "ebpf"`. There is no kernel module involved.
-- Antimalware definitions updated from Microsoft within seconds of boot and report `definitions_status: "up_to_date"`.
-- `mdatp health` reports `health_issues: ["missing license"]` and nothing else, which is the expected state for a host that has not been onboarded to a tenant.
 
 ## Why a bootc build needs anything special
 
@@ -155,6 +140,15 @@ RUN systemctl enable mdatp.service && \
 ### A fifth item, not strictly a workaround
 
 A drop-in, `files/10-hostname-stable.conf`, orders `mdatp.service` after `cloud-init.service` and `systemd-hostnamed.service`. Microsoft's golden image guidance explains why: Defender reads the hostname when the service starts and keeps reporting the device under that name until the service is restarted, and on a machine created from an image the final hostname is often set at first boot by a provisioning service running concurrently.
+
+## Two layouts of the same recipe
+
+Now that the content is clear, the packaging of it. Each of the two Containerfiles comes in two forms, and they produce the same result:
+
+- **`Containerfile.el9` and `Containerfile.el10` at the repo root** read conventionally. The unit file, the `sysusers.d` entry, the `tmpfiles.d` entry, the seeding script, and the service drop-in are real files under `files/`, pulled in with `COPY`.
+- **`single-file/Containerfile.el9` and `single-file/Containerfile.el10`** generate that same supporting content inline with `printf`. It is uglier to read, and it needs no build context beyond itself, so it can be dropped into an existing build pipeline without also arranging to ship five small files alongside it.
+
+Both forms were built, installed to disk, and booted, and both produced the same end state. Pick on convenience. The root pair is the one to adapt, since every step above corresponds to a file you can open on its own.
 
 ## Onboarding
 
