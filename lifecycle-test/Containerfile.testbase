@@ -1,0 +1,14 @@
+# A vanilla CentOS Stream 9 bootc base carrying only the lifecycle test
+# harness. This is the starting point for the test and the image the final
+# stage switches back to. It has never had Defender installed.
+FROM quay.io/centos-bootc/centos-bootc:stream9
+
+ARG REGISTRY
+
+COPY mdatp-lifecycle-test /usr/libexec/mdatp-lifecycle-test
+COPY mdatp-lifecycle-test.service /usr/lib/systemd/system/mdatp-lifecycle-test.service
+RUN chmod 0755 /usr/libexec/mdatp-lifecycle-test && \
+    systemctl enable mdatp-lifecycle-test.service && \
+    echo "${REGISTRY}" > /etc/mdatp-lifecycle-test-registry && \
+    printf '[[registry]]\nlocation = "%s"\ninsecure = true\n' "${REGISTRY}" \
+      > /etc/containers/registries.conf.d/lifecycle-test.conf

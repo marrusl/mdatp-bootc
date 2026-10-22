@@ -170,9 +170,78 @@ Two consequences worth being deliberate about. The onboarding file is tenant-spe
 
 Microsoft documents device identity as deriving from the hardware UUID reported by `dmidecode`, which cloud platforms supply uniquely per instance and which on-premises hypervisors must be configured not to copy when cloning.
 
+## Prerequisites on the build and test host
+
+Everything in this section applies to the machine where you build and test the image. **None of it applies to the deployed host running Defender**, which needs nothing beyond what the image itself carries. Nothing in a production image built from this repo depends on any of the tooling below.
+
+Building the image needs only `podman`. Everything else here is for testing it.
+
+### What the test actually requires
+
+Independent of tooling, reproducing these results means:
+
+- A **real `bootc install` to a disk image**, not a container run.
+- That disk **booted as a VM** under UEFI.
+- The booted host having a **read-only root** and **SELinux in enforcing mode**.
+
+Those three properties are the test. A plain `podman run` of the image, or an ephemeral container-as-VM, gives you none of them: the root is writable, SELinux is not enforcing, and every interesting failure mode in this recipe is invisible. That is the mistake someone substituting their own tooling is most likely to make, and a substitution that does not preserve those properties produces a result that means nothing.
+
+Any virtualization platform can satisfy this. libvirt, plain qemu, vSphere, a cloud instance built from the disk image: all fine.
+
+### What we used, and why
+
+| Tool | Version used | What it is for |
+|---|---|---|
+| `podman` | 5.8.7 | Building the images |
+| `bcvk` | 0.21.0 | Installing a bootc image to a disk image, which is a real `bootc install` |
+| `qemu-system-x86_64` with KVM | 10.2.2 | Booting the resulting disk |
+| `edk2-ovmf` | 20260812 | UEFI firmware for the boot, `/usr/share/edk2/ovmf/OVMF_CODE.fd` |
+
+`bcvk` is **not a hard requirement**. It wraps `bootc install to-disk` behind one command that needs no root and no libvirt, which makes it easy and scriptable, and that is the whole reason it is used here. The short version of the argument for it: because it is a single non-interactive command, the entire verification above can live in a build pipeline rather than being something a person does by hand once and then trusts for a year.
+
+Working KVM is worth checking for separately. Without `/dev/kvm`, dropping `-cpu host` and `accel=kvm` to fall back to emulation is slow enough that the 40 second settle built into the test harnesses stops being long enough, and the results get noisy rather than wrong.
+
+### Using something other than bcvk
+
+The cost is honest and worth knowing up front: **the harness scripts in `selftest/` and `lifecycle-test/` are written against `bcvk`.** Substituting another platform means replacing the install and boot steps, not swapping a command name. Nothing here abstracts over virtualization platforms and nothing here intends to.
+
+What transfers unchanged is everything after the boot: the checks in `selftest/mdatp-selftest` and the driver in `lifecycle-test/` run on the booted host and do not care how it got there. If you already have a virtualization setup, produce a bootc-installed disk with it, boot it, and run those.
+
+### Getting `bcvk`, if you want it
+
+A bootc project tool, upstream at [github.com/bootc-dev/bcvk](https://github.com/bootc-dev/bcvk), Apache-2.0 or MIT. The package is called `bcvk` everywhere.
+
+**On Fedora it is in the main repositories.** No EPEL involved:
+
+```bash
+sudo dnf install bcvk
+```
+
+Fedora 43, 44, and 45 all carry 0.21.0 at the time of writing, which is the version used for everything in this repo.
+
+**On RHEL it comes from EPEL**, which is not enabled by default. On a subscribed RHEL host, EPEL also wants CodeReady Builder enabled first. For RHEL 9:
+
+```bash
+sudo subscription-manager repos --enable codeready-builder-for-rhel-9-$(arch)-rpms
+sudo dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+sudo dnf install bcvk
+```
+
+For RHEL 10, substitute 10 in both of the first two commands. `bcvk` is present in both EPEL 9 and EPEL 10, so there is no parity gap between the two major versions.
+
+Two things to know before you start rather than after:
+
+- **EPEL is community-maintained and is not covered by a Red Hat support agreement.** Given how much of this README is about what is and is not supported, that is worth stating plainly. It applies to the test host only, and only if you choose this path.
+- **The EPEL version is well behind Fedora's.** Both EPEL 9 and EPEL 10 ship `bcvk` **0.10.0**, against 0.21.0 on Fedora. The commands here were not tested against 0.10.0, and some of the flags used, `--target-transport` in particular, may not exist in it. Check `bcvk to-disk --help` against what is written here before concluding that a failure is Defender's fault.
+
+### Prerequisites for each harness
+
+- **`selftest/`**, the single-host checks: a bootc-installed disk booted as a VM, and nothing more.
+- **`lifecycle-test/`**, the deployment-transition checks: the same, plus a container registry the guest VM can reach, because `bootc switch` and `bootc upgrade` resolve real image references. See [`lifecycle-test/README.md`](lifecycle-test/README.md).
+
 ## Build and boot test
 
-What follows is what was actually run, on a Fedora 44 host with `podman`, `bcvk`, and `qemu`.
+What follows is what was actually run, on a Fedora 44 host.
 
 ### Build
 
@@ -273,12 +342,19 @@ Observed on a host installed with `bootc install` and booted. Four combinations 
 - `mdatp health` runs and reports the expected unlicensed state.
 - Both the el9 and el10 Microsoft repositories served the same package build.
 
+Verified across deployment changes, not only fresh installs. On el9, a `bootc switch` onto this image from a vanilla CentOS Stream 9 bootc base, a plain reboot, a `bootc upgrade` to a second build, and a `bootc rollback` were each checked. The seeding unit fires once against an empty `/var` and correctly skips thereafter, definitions in `/var` are never overwritten by the older copy baked into the image, and the agent stayed active with zero AVC denials and no failed units throughout. The harness that produced this is in [`lifecycle-test/`](lifecycle-test/), so the claims can be reproduced rather than taken on faith.
+
+**If you adapt this recipe, do not remove either guard on the seeding step.** `wdavstate` shows `activeDatabasePath` pointing at `definitions.noindex/00000000-0000-0000-0000-000000000000`, the same directory the unit seeds, so Defender updates its definitions in place there rather than in a new directory beside it. The copy baked into the image starts aging the moment it is built, and re-running the seed over a host that has been updating itself for months would replace current definitions with stale ones. Two independent things prevent that: the unit's `ConditionPathExists=!`, which stops it running at all once the engine is present, and the per-file existence check in the script, which skips anything already there. Either alone would be sufficient, which makes it easy to delete one while tidying and not notice that it was doing work.
+
+Switching away from this image leaves the agent's state behind: the tree under `/var/opt/microsoft/mdatp`, including `wdavstate` and the definitions, and the logs under `/var/log/microsoft/mdatp`, whose group shows as the bare numeric `972` once the account goes with the image. Nothing fails because of it, but clearing it is the administrator's job and this recipe does not attempt it.
+
 ## Not verified
 
 - **Anything on RHEL.** Only CentOS Stream was built. The kernel versions differ, which matters for the eBPF sensor because Microsoft documents per-distribution minimum kernels, and the `selinux-policy` base version differs, which matters because the Defender policy modules are compiled against a policy version. Neither is likely to change the outcome, but a RHEL rebuild is the right thing to do before relying on this.
 - **Anything requiring a license or a tenant.** Onboarding, active-mode real-time protection, the EICAR antivirus test, the EDR detection test, and telemetry reaching the Defender portal. The test hosts came up `passive_mode_enabled: true` by default in the absence of a license.
 - **Cloning.** One image booted as two instances should appear as two devices in the portal. This follows from Microsoft's documented hardware-UUID behavior and from nothing enrolling at build time, but it was reasoned rather than observed.
-- **Upgrade and rollback.** `bootc upgrade` to a rebuilt image and `bootc rollback` back from it were not tested. Note that `/var` does not roll back, so an older agent would inherit state written by a newer one.
+- **Re-adoption.** Switching away from this image and later switching back onto it, so that first boot meets a `/var` holding Defender state that may be months old. That is a different case from an empty `/var` or a current one, and it is the one deployment transition not covered. Adding it is one more entry in the lifecycle harness.
+- **Lifecycle testing on el10.** The deployment transitions above were run on el9 only. The two builds are the same recipe and the same package, so there is no particular reason to expect a difference, but it was not checked.
 - **Secure Boot and sealed images.** The test installs used XFS and the ordinary ostree backend with composefs enabled. Nothing in the package suggests a conflict, since there is no kernel module and eBPF loading by a root daemon is not restricted by kernel lockdown, but this was not tested with Secure Boot enabled.
 - **The hostname ordering drop-in.** Correct in form, but the test VMs had no `cloud-init`, so the race it guards against was never exercised.
 

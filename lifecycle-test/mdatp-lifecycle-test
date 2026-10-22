@@ -1,0 +1,125 @@
+#!/bin/bash
+# Lifecycle test driver for Microsoft Defender for Endpoint on bootc.
+#
+# A bootc host changes deployments by rebooting, so a test that spans several
+# deployments cannot be a single script run. This driver is invoked once per
+# boot by mdatp-lifecycle-test.service. Each time it runs it reports the state
+# of the host, advances a stage counter kept in /var, performs the next bootc
+# action, and reboots. Because the counter lives in /var it survives the
+# deployment changes, so the sequence continues across reboots and across
+# separate qemu invocations against the same disk.
+#
+# No SSH is needed: everything goes to the console. See README.md in this
+# directory for the stage sequence and how to run it.
+
+REG_FILE=/etc/mdatp-lifecycle-test-registry
+REG=$(cat "$REG_FILE" 2>/dev/null)
+STATE_DIR=/var/lib/mdatp-lifecycle-test
+SETTLE_SECONDS=40
+
+mkdir -p "$STATE_DIR"
+stage=$(cat "$STATE_DIR/stage" 2>/dev/null || echo 0)
+
+echo "===== LIFECYCLE-STAGE-${stage}-BEGIN ====="
+
+# Let the agent finish starting and pull its first definition update before
+# anything is measured. Without this the health output is a race.
+sleep "$SETTLE_SECONDS"
+
+echo "[booted deployment]"
+bootc status --format=json 2>/dev/null | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+b = (d.get("status") or {}).get("booted") or {}
+img = (b.get("image") or {})
+print("  image: ", (img.get("image") or {}).get("image"))
+print("  digest:", (img.get("imageDigest") or "")[:23])
+' 2>/dev/null || bootc status 2>&1 | head -12
+
+echo "[agent present in the image]"
+if test -x /opt/microsoft/mdatp/sbin/wdavdaemon; then echo "  wdavdaemon: present"; else echo "  wdavdaemon: ABSENT"; fi
+
+echo "[service account]"
+id mdatp 2>&1 | sed 's/^/  /'
+if test -f /usr/lib/sysusers.d/mdatp.conf; then echo "  sysusers.d entry: present"; else echo "  sysusers.d entry: ABSENT"; fi
+
+echo "[writable state directories, with SELinux labels]"
+ls -ldZ /var/opt/microsoft /var/opt/microsoft/mdatp /var/log/microsoft/mdatp 2>&1 | sed 's/^/  /'
+
+echo "[definitions directory]"
+ls -l --time-style=+%Y-%m-%dT%H:%M /var/opt/microsoft/mdatp/definitions.noindex/ 2>&1 | sed 's/^/  /'
+
+echo "[seeded files, mtimes and checksums]"
+seed=/var/opt/microsoft/mdatp/definitions.noindex/00000000-0000-0000-0000-000000000000
+ls -l --time-style=+%Y-%m-%dT%H:%M "$seed/" 2>&1 | sed 's/^/  /'
+# Checksums of the two smallest files are enough to show whether a later boot
+# rewrote the definitions. Hashing the 26 MB engine on every boot is not.
+sha256sum "$seed/libmpengine.so.sig" "$seed/mpasdlta.vdm" 2>&1 | sed 's/^/  /'
+
+echo "[definition paths the agent is actually using]"
+python3 -c '
+import json
+d = json.load(open("/var/opt/microsoft/mdatp/wdavstate"))
+e = d.get("engineCore", {})
+print("  databaseRootPath:  ", e.get("databaseRootPath"))
+print("  activeDatabasePath:", e.get("activeDatabasePath"))
+' 2>&1 | sed 's/^/  /'
+
+echo "[seeding unit]"
+echo "  enabled: $(systemctl is-enabled mdatp-seed-definitions.service 2>&1)"
+echo "  active:  $(systemctl is-active mdatp-seed-definitions.service 2>&1)"
+systemctl show mdatp-seed-definitions.service -p Result -p ExecMainStatus -p ConditionResult 2>&1 | sed 's/^/  /'
+journalctl -u mdatp-seed-definitions -b --no-pager 2>&1 | tail -6 | sed 's/^/  /'
+
+echo "[mdatp.service]"
+echo "  active: $(systemctl is-active mdatp 2>&1)"
+systemctl show mdatp -p Result -p NRestarts 2>&1 | sed 's/^/  /'
+
+echo "[log directory]"
+ls /var/log/microsoft/mdatp 2>&1 | head -4 | sed 's/^/  /'
+if test -d /opt/microsoft/mdatp/log; then
+  echo "  WARNING: /opt/microsoft/mdatp/log exists, the installer fell back to the read-only install tree"
+else
+  echo "  no /opt log fallback directory (expected)"
+fi
+
+echo "[SELinux]"
+sestatus 2>&1 | grep -E "SELinux status|Current mode" | sed 's/^/  /'
+semodule -l 2>/dev/null | grep mdatp | sed 's/^/  module: /' || echo "  no mdatp policy modules"
+
+echo "[AVC denials this boot]"
+ausearch -m avc -ts boot 2>/dev/null | grep -c denied | sed 's/^/  total: /'
+ausearch -m avc -ts boot 2>/dev/null | grep denied | grep -i mdatp | head -5 | sed 's/^/  /'
+
+echo "[mdatp health]"
+timeout 120 mdatp health 2>&1 | grep -E "healthy|health_issues|licensed|app_version|engine_version|definitions_version|definitions_status|definitions_updated |real_time_protection_subsystem|supplementary_events_subsystem|conflicting" | sed 's/^/  /'
+
+echo "[mdatp journal warnings]"
+journalctl -u mdatp -b -p warning --no-pager 2>&1 | tail -6 | sed 's/^/  /'
+
+echo "[failed units]"
+systemctl list-units --state=failed --no-legend --no-pager 2>&1 | sed 's/^/  /'
+
+echo "===== LIFECYCLE-STAGE-${stage}-END ====="
+
+echo $((stage + 1)) > "$STATE_DIR/stage"
+sync
+
+case "$stage" in
+  0) echo ">>> ACTION: bootc switch ${REG}/mdatp:el9"
+     bootc switch --quiet "${REG}/mdatp:el9" 2>&1 | tail -5
+     systemctl reboot ;;
+  1) echo ">>> ACTION: poweroff, end of run 1. Push a second build over the tag, then boot the disk again."
+     systemctl poweroff ;;
+  2) echo ">>> ACTION: bootc upgrade"
+     bootc upgrade --quiet 2>&1 | tail -5
+     systemctl reboot ;;
+  3) echo ">>> ACTION: bootc rollback"
+     bootc rollback 2>&1 | tail -5
+     systemctl reboot ;;
+  4) echo ">>> ACTION: bootc switch ${REG}/testbase:el9, removing the agent by switching away"
+     bootc switch --quiet "${REG}/testbase:el9" 2>&1 | tail -5
+     systemctl reboot ;;
+  *) echo ">>> ACTION: poweroff, end of run 2"
+     systemctl poweroff ;;
+esac

@@ -1,0 +1,18 @@
+# The recipe image from the repo root, plus the lifecycle test harness.
+# Build mdatp-bootc:el9 from ../Containerfile.el9 first.
+FROM localhost/mdatp-bootc:el9
+
+ARG REGISTRY
+
+COPY mdatp-lifecycle-test /usr/libexec/mdatp-lifecycle-test
+COPY mdatp-lifecycle-test.service /usr/lib/systemd/system/mdatp-lifecycle-test.service
+RUN chmod 0755 /usr/libexec/mdatp-lifecycle-test && \
+    systemctl enable mdatp-lifecycle-test.service && \
+    echo "${REGISTRY}" > /etc/mdatp-lifecycle-test-registry && \
+    printf '[[registry]]\nlocation = "%s"\ninsecure = true\n' "${REGISTRY}" \
+      > /etc/containers/registries.conf.d/lifecycle-test.conf
+
+# Set BUILD_MARKER to something different on the second build so the image
+# digest changes and `bootc upgrade` has a newer deployment to move to.
+ARG BUILD_MARKER=1
+RUN echo "${BUILD_MARKER}" > /usr/share/mdatp-lifecycle-test-build

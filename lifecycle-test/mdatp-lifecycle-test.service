@@ -1,0 +1,14 @@
+[Unit]
+Description=Microsoft Defender for Endpoint bootc lifecycle test driver
+After=mdatp.service multi-user.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=900
+StandardOutput=journal+console
+StandardError=journal+console
+ExecStart=/usr/libexec/mdatp-lifecycle-test
+
+[Install]
+WantedBy=multi-user.target
