@@ -207,7 +207,7 @@ sudo dnf install bcvk
 
 Substitute 10 in the first two commands for RHEL 10. Both EPEL 9 and EPEL 10 carry it, so there is no parity gap between the majors.
 
-Two things to know first. EPEL is community-maintained and not covered by a Red Hat support agreement, which applies to the test host only. And both EPEL branches ship **0.10.0** against Fedora's 0.21.0; the commands here were not tested against 0.10.0 and some flags used, `--target-transport` in particular, may not exist in it.
+Two things to know first. EPEL is community-maintained and not covered by a Red Hat support agreement, which applies to the test host only. And both EPEL branches ship **0.10.0**, from January 2026, against Fedora's 0.21.0 from October. Every `bcvk` flag used in this repo, `--filesystem`, `--disk-size`, `--karg`, and `--target-transport`, is present in 0.10.0 with the same name and meaning, so the commands here work on EPEL as written. That was checked against the `v0.10.0` tag in the upstream source rather than inferred from the release notes.
 
 ### Per harness
 

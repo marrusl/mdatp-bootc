@@ -23,7 +23,7 @@ Each report covers the booted image and digest, whether the agent is in the imag
 
 ## What it needs
 
-- The host toolchain in the main README under [Prerequisites](../README.md#prerequisites-on-the-build-and-test-host). On RHEL, note the EPEL caveats for `bcvk` there.
+- The host toolchain in the main README under [Prerequisites](../README.md#prerequisites-on-the-build-and-test-host). On RHEL, `bcvk` comes from EPEL; see the note there.
 - **A container registry the guest can reach**, which `selftest/` does not need. `bootc switch` and `bootc upgrade` resolve real image references, so the images have to be served from somewhere the VM can pull from. A throwaway local registry is enough, at an address that works from both host and guest: under qemu user-mode networking the guest reaches the host's LAN address, so `localhost` will not do.
 
 ## Running it
