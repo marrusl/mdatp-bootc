@@ -170,54 +170,7 @@ Two consequences worth being deliberate about. The onboarding file is tenant-spe
 
 Microsoft documents device identity as deriving from the hardware UUID reported by `dmidecode`, which cloud platforms supply uniquely per instance and which on-premises hypervisors must be configured not to copy when cloning.
 
-## Prerequisites on the build and test host
-
-None of this applies to the deployed host running Defender, which needs nothing beyond what the image carries. Building the image needs only `podman`; the rest is for testing it.
-
-What the test requires, independent of tooling: a real `bootc install` to a disk image, booted as a VM under UEFI, with a read-only root and SELinux enforcing. A `podman run` of the image, or an ephemeral container-as-VM, gives you none of those and will not exercise anything in this recipe. Any virtualization platform that preserves them works.
-
-| Tool | Version used | What it is for |
-|---|---|---|
-| `podman` | 5.8.7 | Building the images |
-| `bcvk` | 0.21.0 | Installing a bootc image to a disk image, which is a real `bootc install` |
-| `qemu-system-x86_64` with KVM | 10.2.2 | Booting the resulting disk |
-| `edk2-ovmf` | 20260812 | UEFI firmware, `/usr/share/edk2/ovmf/OVMF_CODE.fd` |
-
-`bcvk` is not a requirement. It wraps `bootc install to-disk` in one command that needs no root and no libvirt, which is why it is used here: a single non-interactive command means the verification can live in a build pipeline rather than being done by hand once. Substituting another virt platform is fine, but the scripts under `selftest/` and `lifecycle-test/` are written against `bcvk`, so it means replacing the install and boot steps rather than swapping a command name. Everything after the boot runs on the host and transfers unchanged.
-
-Without `/dev/kvm`, falling back to emulation is slow enough that the 40 second settle in the harnesses stops being long enough.
-
-### Getting `bcvk`
-
-Upstream at [github.com/bootc-dev/bcvk](https://github.com/bootc-dev/bcvk), Apache-2.0 or MIT. The package is called `bcvk` everywhere.
-
-On Fedora it is in the main repositories, no EPEL involved. Fedora 43, 44, and 45 carry 0.21.0, the version used here:
-
-```bash
-sudo dnf install bcvk
-```
-
-On RHEL it comes from EPEL, which is not enabled by default and which wants CodeReady Builder enabled first on a subscribed host. For RHEL 9:
-
-```bash
-sudo subscription-manager repos --enable codeready-builder-for-rhel-9-$(arch)-rpms
-sudo dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
-sudo dnf install bcvk
-```
-
-Substitute 10 in the first two commands for RHEL 10. Both EPEL 9 and EPEL 10 carry it, so there is no parity gap between the majors.
-
-Two things to know first. EPEL is community-maintained and not covered by a Red Hat support agreement, which applies to the test host only. And both EPEL branches ship **0.10.0**, from January 2026, against Fedora's 0.21.0 from October. Every `bcvk` flag used in this repo, `--filesystem`, `--disk-size`, `--karg`, and `--target-transport`, is present in 0.10.0 with the same name and meaning, so the commands here work on EPEL as written. That was checked against the `v0.10.0` tag in the upstream source rather than inferred from the release notes.
-
-### Per harness
-
-`selftest/` needs a bootc-installed disk booted as a VM. `lifecycle-test/` additionally needs a container registry the guest can reach, since `bootc switch` and `bootc upgrade` resolve real image references.
-
-## Build and boot test
-
-What follows is what was actually run, on a Fedora 44 host.
-
-### Build
+## Building
 
 From the repo root, for the conventional pair:
 
@@ -233,39 +186,20 @@ podman build -f single-file/Containerfile.el9 -t mdatp-bootc:el9 .
 podman build -f single-file/Containerfile.el10 -t mdatp-bootc:el10 .
 ```
 
-The `%post` warning described above appears during the build and is expected.
+The `%post` warning described above appears during the build and is expected. Building needs only `podman`. Testing the result needs more, and is covered in [TESTING.md](TESTING.md).
 
-### Install to a disk image and boot it
+## Verified
 
-This is a real `bootc install`, which is what makes the test meaningful. Running the container image directly under `podman` or as an ephemeral VM will not give you a read-only root or enforcing SELinux, and will not tell you what you need to know.
+Observed on a host installed with `bootc install` and booted. Four combinations were tested: CentOS Stream 9 and CentOS Stream 10, each in both the conventional and the single-file layout. All four produced the same end state, and the refactor from one layout to the other changed nothing observable.
 
-```bash
-bcvk to-disk --filesystem xfs --disk-size 20G --karg console=ttyS0 \
-  --target-transport containers-storage localhost/mdatp-bootc:el9 el9.raw
+- The agent builds, installs, and runs. `systemctl is-active mdatp` returns `active`.
+- SELinux enforcing, both policy modules loaded, zero AVC denials since boot.
+- The root filesystem is read-only and `/opt/microsoft/mdatp` is not writable.
+- Logs are written to `/var/log/microsoft/mdatp`, not relocated into `/opt`.
+- Definitions are present in `/var` and updated from Microsoft over the network after boot.
+- Both the el9 and el10 Microsoft repositories served the same package build.
 
-qemu-system-x86_64 -machine q35,accel=kvm -cpu host -m 4096 -smp 4 \
-  -nographic -serial mon:stdio -display none \
-  -bios /usr/share/edk2/ovmf/OVMF_CODE.fd \
-  -drive file=el9.raw,format=raw,if=virtio \
-  -netdev user,id=n0 -device virtio-net-pci,netdev=n0
-```
-
-The `console=ttyS0` kernel argument is needed for the boot to appear on the serial console.
-
-### Checks on the booted host
-
-```bash
-sestatus | grep "Current mode"            # expect: enforcing
-semodule -l | grep mdatp                  # expect: audisp_mdatp_rhel77, mdatp_service
-systemctl is-active mdatp                 # expect: active
-id mdatp                                  # expect: the account exists
-touch /opt/microsoft/mdatp/WRITETEST      # expect: Read-only file system
-ls /var/log/microsoft/mdatp               # expect: logs here, not under /opt
-ausearch -m avc -ts boot | grep -c denied # expect: 0
-mdatp health
-```
-
-An unlicensed `mdatp health` passing looks like this, which is verbatim what both images produced:
+`mdatp health` on an unonboarded host, verbatim what both images produced:
 
 ```
 ATTENTION: No license found. Contact your administrator for help.
@@ -282,41 +216,11 @@ definitions_status            : "up_to_date"
 conflicting_applications      : []
 ```
 
-`healthy: false` with `missing license` as the only health issue is the expected unonboarded result. With a tenant onboarding file in place, the same command should show a non-empty `org_id`, `licensed: true`, and `healthy: true`.
+`healthy: false` with `missing license` as the only health issue is the expected result without a tenant onboarding package.
 
-### Automated selftest
+Verified across deployment changes, not only fresh installs. On el9, a `bootc switch` onto this image from a vanilla CentOS Stream 9 bootc base, a plain reboot, a `bootc upgrade` to a second build, and a `bootc rollback` were each checked. The seeding unit fires once against an empty `/var` and correctly skips thereafter, definitions in `/var` are never overwritten by the older copy baked into the image, and the agent stayed active with zero AVC denials and no failed units throughout.
 
-The `selftest/` directory contains a harness that automates the checks above. It layers a oneshot unit onto either image that waits for the agent to settle, runs the checks with output on the console, and powers the machine off, so the whole verification is one boot with no interactive login.
-
-Note the build context is `selftest/`, not the repo root, since that is where the script it copies lives.
-
-```bash
-podman build -f selftest/Containerfile.el9-selftest -t mdatp-bootc:el9-selftest selftest/
-bcvk to-disk --filesystem xfs --disk-size 20G --karg console=ttyS0 \
-  --target-transport containers-storage localhost/mdatp-bootc:el9-selftest el9.raw
-qemu-system-x86_64 -machine q35,accel=kvm -cpu host -m 4096 -smp 4 \
-  -nographic -serial mon:stdio -display none \
-  -bios /usr/share/edk2/ovmf/OVMF_CODE.fd \
-  -drive file=el9.raw,format=raw,if=virtio \
-  -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-  | sed -n '/MDATP-SELFTEST-BEGIN/,/MDATP-SELFTEST-END/p'
-```
-
-The selftest images are for verification only. Do not deploy them.
-
-## Verified
-
-Observed on a host installed with `bootc install` and booted. Four combinations were tested: CentOS Stream 9 and CentOS Stream 10, each in both the conventional and the single-file layout. All four produced the same end state, and the refactor from one layout to the other changed nothing observable.
-
-- The agent builds, installs, and runs. `systemctl is-active mdatp` returns `active`.
-- SELinux enforcing, both policy modules loaded, zero AVC denials since boot.
-- The root filesystem is read-only and `/opt/microsoft/mdatp` is not writable.
-- Logs are written to `/var/log/microsoft/mdatp`, not relocated into `/opt`.
-- Definitions are present in `/var` and updated from Microsoft over the network after boot.
-- `mdatp health` runs and reports the expected unlicensed state.
-- Both the el9 and el10 Microsoft repositories served the same package build.
-
-Verified across deployment changes, not only fresh installs. On el9, a `bootc switch` onto this image from a vanilla CentOS Stream 9 bootc base, a plain reboot, a `bootc upgrade` to a second build, and a `bootc rollback` were each checked. The seeding unit fires once against an empty `/var` and correctly skips thereafter, definitions in `/var` are never overwritten by the older copy baked into the image, and the agent stayed active with zero AVC denials and no failed units throughout. The harness that produced those runs is in [`lifecycle-test/`](lifecycle-test/).
+The harnesses that produced all of this, and how to re-run or extend them, are documented in [TESTING.md](TESTING.md).
 
 **If you adapt this recipe, do not remove either guard on the seeding step.** `wdavstate` shows `activeDatabasePath` pointing at `definitions.noindex/00000000-0000-0000-0000-000000000000`, the same directory the unit seeds, so Defender updates its definitions in place there rather than in a new directory beside it. The copy baked into the image starts aging the moment it is built, and re-running the seed over a host that has been updating itself for months would replace current definitions with stale ones. Two independent things prevent that: the unit's `ConditionPathExists=!`, which stops it running at all once the engine is present, and the per-file existence check in the script, which skips anything already there. Either alone would be sufficient, which makes it easy to delete one while tidying and not notice that it was doing work.
 
