@@ -1,0 +1,19 @@
+FROM localhost/mdatp-bootc:el9
+COPY mdatp-selftest /usr/libexec/mdatp-selftest
+RUN chmod 0755 /usr/libexec/mdatp-selftest && \
+    printf '%s\n' \
+    '[Unit]' \
+    'Description=mdatp bootc selftest' \
+    'After=mdatp.service multi-user.target' \
+    'Wants=mdatp.service' \
+    '' \
+    '[Service]' \
+    'Type=oneshot' \
+    'StandardOutput=journal+console' \
+    'StandardError=journal+console' \
+    'ExecStart=/usr/libexec/mdatp-selftest' \
+    '' \
+    '[Install]' \
+    'WantedBy=multi-user.target' \
+    > /usr/lib/systemd/system/mdatp-selftest.service && \
+    systemctl enable mdatp-selftest.service

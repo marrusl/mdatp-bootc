@@ -1,0 +1,18 @@
+#!/bin/bash
+echo "===== MDATP-SELFTEST-BEGIN ====="
+sleep 45
+echo "--- sestatus ---"; sestatus | head -6
+echo "--- /usr mount opts ---"; findmnt -no FSTYPE,OPTIONS /usr
+echo "--- / mount opts ---"; findmnt -no FSTYPE,OPTIONS /
+echo "--- ls -ld /opt /var/opt /opt/microsoft/mdatp ---"; ls -ld /opt /var/opt /opt/microsoft/mdatp
+echo "--- write test to /opt/microsoft/mdatp ---"; touch /opt/microsoft/mdatp/WRITETEST 2>&1 && echo "OPT_WRITABLE" || echo "OPT_READONLY"
+echo "--- id mdatp ---"; id mdatp
+echo "--- systemctl mdatp ---"; systemctl is-active mdatp; systemctl is-active mdatp-seed-definitions
+echo "--- definitions in /var ---"; ls -l /var/opt/microsoft/mdatp/definitions.noindex/00000000-0000-0000-0000-000000000000/ 2>&1 | head
+echo "--- logdir ---"; ls -ld /var/log/microsoft/mdatp 2>&1; ls /var/log/microsoft/mdatp 2>&1 | head
+echo "--- semodule ---"; semodule -l | grep mdatp
+echo "--- mdatp health ---"; timeout 120 mdatp health 2>&1 | head -45
+echo "--- avc denials ---"; ausearch -m avc -ts boot 2>&1 | grep -c denied
+echo "--- journal mdatp errors ---"; journalctl -u mdatp --no-pager -p warning 2>&1 | tail -20
+echo "===== MDATP-SELFTEST-END ====="
+systemctl poweroff
