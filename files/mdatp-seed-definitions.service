@@ -1,0 +1,12 @@
+[Unit]
+Description=Seed Microsoft Defender antimalware definitions into /var
+Before=mdatp.service
+ConditionPathExists=!/var/opt/microsoft/mdatp/definitions.noindex/00000000-0000-0000-0000-000000000000/libmpengine.so
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/mdatp-seed-definitions
+
+[Install]
+WantedBy=multi-user.target

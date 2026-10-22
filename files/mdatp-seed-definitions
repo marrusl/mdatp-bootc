@@ -1,0 +1,20 @@
+#!/bin/bash
+# Copy the antimalware engine and signature files shipped in the read-only
+# install tree into the writable location the running daemon reads from.
+#
+# The package's %post scriptlet does this on a conventional host, but it exits
+# before reaching this point in a container build. Doing it at boot rather
+# than at build time means a host picks up a newer shipped engine after an
+# image upgrade, which a build-time copy into /var would not survive.
+set -euo pipefail
+
+src=/opt/microsoft/mdatp/definitions
+dst=/var/opt/microsoft/mdatp/definitions.noindex/00000000-0000-0000-0000-000000000000
+
+install -d -m 0755 "$dst"
+
+for f in libmpengine.so libmpengine.so.sig mpavbase.vdm mpasbase.vdm mpavdlta.vdm mpasdlta.vdm; do
+  [ -e "$dst/$f" ] && continue
+  cp -L "$src/$f" "$dst/$f"
+  chmod 444 "$dst/$f"
+done

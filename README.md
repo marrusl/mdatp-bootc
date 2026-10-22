@@ -17,9 +17,18 @@ Two Containerfiles, one for each major version:
 | `Containerfile.el9` | `quay.io/centos-bootc/centos-bootc:stream9` | `packages.microsoft.com/config/rhel/9/prod.repo` |
 | `Containerfile.el10` | `quay.io/centos-bootc/centos-bootc:stream10` | `packages.microsoft.com/config/rhel/10/prod.repo` |
 
-They are identical apart from the base image, the repo URL, and the GPG key, since the el10 repo is signed with `microsoft-2025.asc` rather than `microsoft.asc`. Both repos served the same package build, `mdatp-101.26081.0010-1.x86_64`, at the time of writing.
+The two are identical apart from the base image, the repo URL, and the GPG key, since the el10 repo is signed with `microsoft-2025.asc` rather than `microsoft.asc`. Both repos served the same package build, `mdatp-101.26081.0010-1.x86_64`, at the time of writing.
 
-On a host installed from either image and booted:
+### Two layouts of the same recipe
+
+Each version comes in two forms, and they produce the same result:
+
+- **`Containerfile.el9` and `Containerfile.el10` at the repo root** read conventionally. The unit file, the `sysusers.d` entry, the `tmpfiles.d` entry, the seeding script, and the service drop-in are real files under `files/`, pulled in with `COPY`. This is the pair to read and to adapt, because each supporting file is something you can open, review, and change on its own.
+- **`single-file/Containerfile.el9` and `single-file/Containerfile.el10`** generate that same supporting content inline with `printf`. It is uglier to read, and it needs no build context beyond itself, so it can be dropped into an existing build pipeline without also arranging to ship five small files alongside it.
+
+Both forms were built, installed to disk, and booted, and both produced the same end state. Pick on convenience. If you are reading this to understand what Defender needs on bootc, read the root pair.
+
+On a host installed from any of these images and booted:
 
 - `mdatp.service` is active, running `wdavdaemon` out of `/opt/microsoft/mdatp/sbin`.
 - SELinux is in enforcing mode, both Defender policy modules are loaded, and there were no AVC denials across the boot.
@@ -71,13 +80,15 @@ Log directory permissions insufficient, switching to opt path
 
 Defender then concludes that `/var` is unsuitable and relocates its log directory to `/opt/microsoft/mdatp/log`. On a conventional host that is merely unusual. On a bootc host `/opt` is read-only, so the agent has nowhere to write its logs, and the failure surfaces later and somewhere unrelated to its cause.
 
-The fix is a `sysusers.d` entry applied at build time, which also re-asserts the account on every boot:
+The fix is a `sysusers.d` entry applied at build time, which also re-asserts the account on every boot. `files/mdatp.sysusers.conf`:
+
+```
+u mdatp 972 "Microsoft Defender for Endpoint" - /sbin/nologin
+```
 
 ```dockerfile
-RUN printf 'u mdatp 972 "Microsoft Defender for Endpoint" - /sbin/nologin\n' \
-      > /usr/lib/sysusers.d/mdatp.conf && \
-    systemd-sysusers && \
-    id mdatp
+COPY files/mdatp.sysusers.conf /usr/lib/sysusers.d/mdatp.conf
+RUN systemd-sysusers && id mdatp
 ```
 
 The fixed UID is deliberate. Microsoft's prerequisites page notes that Defender otherwise creates the account with random UID and GID values and suggests pre-creating it if you want to control them, which for a reproducible image build you do.
@@ -105,9 +116,9 @@ It prints a harmless warning about a non-atomic rename across devices, which is 
 
 `%post` copies the shipped engine and signature files from `/opt/microsoft/mdatp/definitions` into `/var/opt/microsoft/mdatp/definitions.noindex/00000000-0000-0000-0000-000000000000/`, which is where the running daemon looks for them. Without that copy, the daemon starts with no engine.
 
-This is done as a systemd unit rather than a build step, for a bootc-specific reason: content an image places in `/var` is applied when the host is installed and not on subsequent upgrades, so a build-time copy would go stale the first time the image shipped a newer engine. The unit is ordered before `mdatp.service`, is conditioned on the target being absent, and copies only if needed.
+This is done as a systemd unit rather than a build step, for a bootc-specific reason: content an image places in `/var` is applied when the host is installed and not on subsequent upgrades, so a build-time copy would go stale the first time the image shipped a newer engine. The unit, `files/mdatp-seed-definitions.service`, is ordered before `mdatp.service`, is conditioned on the target being absent, and runs `files/mdatp-seed-definitions`, which copies only what is missing.
 
-A companion `tmpfiles.d` entry recreates the writable directory skeleton on every boot:
+A companion `tmpfiles.d` entry, `files/mdatp.tmpfiles.conf`, recreates the writable directory skeleton on every boot:
 
 ```
 d /var/opt/microsoft 0755 root root -
@@ -141,7 +152,7 @@ RUN systemctl enable mdatp.service && \
 
 ### A fifth item, not strictly a workaround
 
-A drop-in orders `mdatp.service` after `cloud-init.service` and `systemd-hostnamed.service`. Microsoft's golden image guidance explains why: Defender reads the hostname when the service starts and keeps reporting the device under that name until the service is restarted, and on a machine created from an image the final hostname is often set at first boot by a provisioning service running concurrently.
+A drop-in, `files/10-hostname-stable.conf`, orders `mdatp.service` after `cloud-init.service` and `systemd-hostnamed.service`. Microsoft's golden image guidance explains why: Defender reads the hostname when the service starts and keeps reporting the device under that name until the service is restarted, and on a machine created from an image the final hostname is often set at first boot by a provisioning service running concurrently.
 
 ## Onboarding
 
@@ -163,9 +174,18 @@ What follows is what was actually run, on a Fedora 44 host with `podman`, `bcvk`
 
 ### Build
 
+From the repo root, for the conventional pair:
+
 ```bash
 podman build -f Containerfile.el9 -t mdatp-bootc:el9 .
 podman build -f Containerfile.el10 -t mdatp-bootc:el10 .
+```
+
+Or for the single-file pair, which needs nothing from the build context:
+
+```bash
+podman build -f single-file/Containerfile.el9 -t mdatp-bootc:el9 .
+podman build -f single-file/Containerfile.el10 -t mdatp-bootc:el10 .
 ```
 
 The `%post` warning described above appears during the build and is expected.
@@ -223,8 +243,10 @@ conflicting_applications      : []
 
 The `selftest/` directory contains a harness that automates the checks above. It layers a oneshot unit onto either image that waits for the agent to settle, runs the checks with output on the console, and powers the machine off, so the whole verification is one boot with no interactive login.
 
+Note the build context is `selftest/`, not the repo root, since that is where the script it copies lives.
+
 ```bash
-podman build -f selftest/Containerfile.el9-selftest -t mdatp-bootc:el9-selftest .
+podman build -f selftest/Containerfile.el9-selftest -t mdatp-bootc:el9-selftest selftest/
 bcvk to-disk --filesystem xfs --disk-size 20G --karg console=ttyS0 \
   --target-transport containers-storage localhost/mdatp-bootc:el9-selftest el9.raw
 qemu-system-x86_64 -machine q35,accel=kvm -cpu host -m 4096 -smp 4 \
@@ -239,7 +261,7 @@ The selftest images are for verification only. Do not deploy them.
 
 ## Verified
 
-Observed on a host installed with `bootc install` and booted, on both CentOS Stream 9 and CentOS Stream 10:
+Observed on a host installed with `bootc install` and booted. Four combinations were tested: CentOS Stream 9 and CentOS Stream 10, each in both the conventional and the single-file layout. All four produced the same end state, and the refactor from one layout to the other changed nothing observable.
 
 - The agent builds, installs, and runs. `systemctl is-active mdatp` returns `active`.
 - SELinux enforcing, both policy modules loaded, zero AVC denials since boot.

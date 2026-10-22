@@ -5,15 +5,13 @@ FROM quay.io/centos-bootc/centos-bootc:stream10
 #    does not happen in a container build, and a missing mdatp user cascades
 #    into the installer relocating its log directory into the read-only
 #    install tree. sysusers.d also re-asserts the account on every boot.
-RUN printf 'u mdatp 972 "Microsoft Defender for Endpoint" - /sbin/nologin\n' \
-      > /usr/lib/sysusers.d/mdatp.conf && \
-    systemd-sysusers && \
-    id mdatp
+COPY files/mdatp.sysusers.conf /usr/lib/sysusers.d/mdatp.conf
+RUN systemd-sysusers && id mdatp
 
 # 2. Install the agent from Microsoft's RHEL 10 repository.
 #    The %post scriptlet exits 1 because it tries to talk to systemd and to
 #    start the daemon, neither of which exists during a build. dnf still
-#    returns 0 and the payload is complete; steps 3 to 6 do the parts of
+#    returns 0 and the payload is complete; steps 3 to 8 do the parts of
 #    %post that matter and that a build can actually do.
 RUN rpm --import https://packages.microsoft.com/keys/microsoft-2025.asc && \
     curl -fsSL -o /etc/yum.repos.d/microsoft-prod.repo \
@@ -31,46 +29,16 @@ RUN semodule -i /opt/microsoft/mdatp/conf/selinux_policies/out/mdatp_service.pp 
 # 4. Recreate the writable state and log directories on every boot. Content
 #    placed in /var by the image is applied at install time only, so a
 #    tmpfiles.d entry is what keeps these present across upgrades.
-RUN printf '%s\n' \
-    'd /var/opt/microsoft 0755 root root -' \
-    'd /var/opt/microsoft/mdatp 0755 root root -' \
-    'd /var/opt/microsoft/mdatp/wdavdiag 0755 root root -' \
-    'd /var/opt/microsoft/mdatp/crash 0755 root root -' \
-    'd /var/log/microsoft 0755 root root -' \
-    'd /var/log/microsoft/mdatp 0775 root mdatp -' \
-    > /usr/lib/tmpfiles.d/mdatp.conf
+COPY files/mdatp.tmpfiles.conf /usr/lib/tmpfiles.d/mdatp.conf
 
 # 5. Seed the antimalware definitions into /var before the daemon starts,
-#    which is what the package's %post does on a package-mode host. This is
+#    which is what the package's %post does on a conventional host. This is
 #    a unit rather than a build step because /var content baked into the
 #    image is applied at install time only and would not reappear after an
 #    upgrade that changed the shipped engine.
-RUN printf '%s\n' \
-    '#!/bin/bash' \
-    'set -euo pipefail' \
-    'src=/opt/microsoft/mdatp/definitions' \
-    'dst=/var/opt/microsoft/mdatp/definitions.noindex/00000000-0000-0000-0000-000000000000' \
-    'install -d -m 0755 "$dst"' \
-    'for f in libmpengine.so libmpengine.so.sig mpavbase.vdm mpasbase.vdm mpavdlta.vdm mpasdlta.vdm; do' \
-    '  [ -e "$dst/$f" ] && continue' \
-    '  cp -L "$src/$f" "$dst/$f"' \
-    '  chmod 444 "$dst/$f"' \
-    'done' \
-    > /usr/libexec/mdatp-seed-definitions && chmod 0755 /usr/libexec/mdatp-seed-definitions && \
-    printf '%s\n' \
-    '[Unit]' \
-    'Description=Seed Microsoft Defender antimalware definitions into /var' \
-    'Before=mdatp.service' \
-    'ConditionPathExists=!/var/opt/microsoft/mdatp/definitions.noindex/00000000-0000-0000-0000-000000000000/libmpengine.so' \
-    '' \
-    '[Service]' \
-    'Type=oneshot' \
-    'RemainAfterExit=yes' \
-    'ExecStart=/usr/libexec/mdatp-seed-definitions' \
-    '' \
-    '[Install]' \
-    'WantedBy=multi-user.target' \
-    > /usr/lib/systemd/system/mdatp-seed-definitions.service
+COPY files/mdatp-seed-definitions /usr/libexec/mdatp-seed-definitions
+COPY files/mdatp-seed-definitions.service /usr/lib/systemd/system/mdatp-seed-definitions.service
+RUN chmod 0755 /usr/libexec/mdatp-seed-definitions
 
 # 6. ONBOARDING PLACEHOLDER. Replace the RUN below with a COPY of the
 #    mdatp_onboard.json extracted from your tenant's
@@ -100,10 +68,6 @@ RUN systemctl enable mdatp.service && \
 # 9. Defender reads the hostname when the service starts and keeps reporting
 #    under whatever it saw. On a cloned host the final hostname is often set
 #    by cloud-init at first boot, so order the service after it.
-RUN mkdir -p /usr/lib/systemd/system/mdatp.service.d && \
-    printf '%s\n' \
-    '[Unit]' \
-    'After=cloud-init.service systemd-hostnamed.service' \
-    > /usr/lib/systemd/system/mdatp.service.d/10-hostname-stable.conf
+COPY files/10-hostname-stable.conf /usr/lib/systemd/system/mdatp.service.d/10-hostname-stable.conf
 
 RUN bootc container lint
