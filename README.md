@@ -290,4 +290,4 @@ See [LICENSE-DOCS](LICENSE-DOCS) and [LICENSE](LICENSE) for the full terms.
 
 ---
 
-Microsoft, Microsoft Defender, and Defender for Endpoint are trademarks of Microsoft Corporation. Red Hat and Red Hat Enterprise Linux are trademarks of Red Hat, Inc. This repository is not affiliated with or endorsed by either.
+Microsoft, Microsoft Defender, and Defender for Endpoint are trademarks of the Microsoft group of companies. Red Hat and Red Hat Enterprise Linux are trademarks of Red Hat, LLC, registered in the United States and other countries. This repository is not affiliated with or endorsed by either company.
