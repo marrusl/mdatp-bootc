@@ -1,8 +1,8 @@
 # Lifecycle test
 
-The checks in `selftest/` cover one host, installed fresh and booted once. That is the easy case. This harness covers the cases that come after it: adopting the agent by switching an existing host onto the image, upgrading to a newer build, rolling back, and removing the agent by switching away.
+Working material, not product documentation. It is here so the lifecycle claims in the main README can be checked and extended by someone working on the recipe rather than only asserted.
 
-These are the cases where a quietly wrong behavior would live, because content an image places in `/var` is applied when the host is installed and **not** on any subsequent deployment change. A host that arrives by `bootc switch` gets nothing in `/var` from the image, and a host that upgrades keeps the `/var` it already had. The results this harness produced are summarized in the repo's main README under Verified.
+`selftest/` covers one host, installed fresh and booted once. This harness covers what comes after: adopting the agent by switching an existing host onto the image, upgrading to a newer build, rolling back, and removing the agent by switching away. Those are the cases where a quietly wrong behavior would live, because content an image places in `/var` is applied when the host is installed and **not** on any subsequent deployment change. A host that arrives by `bootc switch` gets nothing in `/var` from the image; a host that upgrades keeps the `/var` it already had. Results are summarized in the main README under Verified.
 
 ## What it does
 
@@ -23,10 +23,8 @@ Each report covers the booted image and digest, whether the agent is in the imag
 
 ## What it needs
 
-- The host toolchain listed in the repo's main README under [Prerequisites](../README.md#prerequisites-on-the-build-and-test-host): `podman`, `bcvk`, `qemu` with KVM, and `edk2-ovmf`. `bcvk` is the one worth checking for first, and on RHEL it comes from EPEL at an older version than Fedora's. That section has the details and the caveats.
-- **A container registry the guest can reach.** This is the one requirement the single-host `selftest/` does not have. `bootc switch` and `bootc upgrade` resolve real image references, so the images have to be served from somewhere the VM can pull from. A throwaway local registry is enough. It must be reachable at an address that works from both the host and the guest, which rules out `localhost`: under qemu user-mode networking the guest reaches the host's LAN address, so use that.
-
-None of this applies to a host actually running the agent. It is all test scaffolding.
+- The host toolchain in the main README under [Prerequisites](../README.md#prerequisites-on-the-build-and-test-host). On RHEL, note the EPEL caveats for `bcvk` there.
+- **A container registry the guest can reach**, which `selftest/` does not need. `bootc switch` and `bootc upgrade` resolve real image references, so the images have to be served from somewhere the VM can pull from. A throwaway local registry is enough, at an address that works from both host and guest: under qemu user-mode networking the guest reaches the host's LAN address, so `localhost` will not do.
 
 ## Running it
 
@@ -93,9 +91,9 @@ Tear the registry down when you are finished:
 podman rm -f lifecycle-registry
 ```
 
-## Reading the results
+## What to look at
 
-The things worth looking at, in rough order of how much they would matter if they were wrong:
+In rough order of how much it would matter if it were wrong:
 
 - **Stage 1, the log directory.** It must be `/var/log/microsoft/mdatp`, and `/opt/microsoft/mdatp/log` must not exist. This is the case where `/var` is least prepared, so it is where the installer's fallback into the read-only install tree is most likely to trigger.
 - **Stages 3 and 4, the seeded file mtimes and checksums.** They must be unchanged from stage 1. If they move, the older definitions baked into the image have overwritten the newer ones in `/var`, which is the specific failure this design exists to avoid.
