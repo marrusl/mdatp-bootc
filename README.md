@@ -10,7 +10,7 @@ This is **unofficial**. It is not a Red Hat supported configuration, it is not a
 
 Everything here was built and booted on the **CentOS Stream 9 and CentOS Stream 10 bootc base images**, not on Red Hat Enterprise Linux. Stream was used because it needs no build-time subscription entitlement. The Microsoft package is the same one in both cases, installed from Microsoft's own RHEL 9 and RHEL 10 repositories, but a Stream result is not a RHEL result and should not be read as one. See [Not verified](#not-verified) below.
 
-Separately from whether the recipe works, whether a bootc-built RHEL host counts as RHEL for Defender support purposes is an open question. Microsoft has published language pointing both ways, and it is laid out under [Microsoft support stance](#microsoft-support-stance) below.
+Working and supported are not the same thing. **Do not assume Microsoft supports Defender on an image mode host.** Nothing here is a statement of Microsoft's position, and the fact that the agent runs is not evidence that it is supported. If you are going to depend on this, confirm the support status with your own Microsoft representative first, not after something goes wrong. The published material bearing on it is laid out under [Microsoft support stance](#microsoft-support-stance) below.
 
 ## The Containerfiles
 
@@ -248,12 +248,12 @@ Creating the account explicitly, as step 1 of these Containerfiles does, makes t
 
 ### Microsoft support stance
 
-Whether a bootc-built host counts as a supported Defender configuration is an open question, and it is not one that can be answered from outside Microsoft. Two pieces of published material bear on it:
+Whether a bootc-built host counts as a supported Defender configuration is not a question this repository can answer, and the published material does not settle it. Treat the configuration as unsupported unless your own Microsoft representative tells you otherwise. Two pieces of published material bear on it:
 
 - [mdatp-xplat issue #240](https://github.com/microsoft/mdatp-xplat/issues/240), "Bug: Install fails under Atomic Fedora (Silverblue, Kinoite, etc)", filed 2026-07-03. A Microsoft contributor replied on 2026-09-18: "Atomic Fedora variants such as Silverblue/Kinoite/rpm-ostree are not currently supported. Microsoft Defender for Endpoint supports standard Fedora releases listed in the public prerequisites, but not the immutable rpm-ostree install model used by these variants. Closing this as unsupported." The reported failure is in `rpm-ostree install mdatp`, which layers a package onto an already-deployed host and runs scriptlets in a sandbox against a read-only `/var`. That is a different operation from installing the package into a container image during a build, which is what this repository does and where `/var` is writable.
 - The [prerequisites page](https://learn.microsoft.com/en-us/defender-endpoint/mde-linux-prerequisites) states that Defender "can be installed and may function on customized operating systems that meet minimal kernel requirements and are derived from known, standard, vendor-provided Linux distributions that Microsoft supports... However, these customized environments aren't part of Microsoft's validated or maintained support baseline. As a result, they're treated as custom OS configurations from a support perspective. Customers are expected to validate Defender for Endpoint within these custom environments and, if needed, reproduce issues on a supported, standard (unmodified) Linux distribution."
 
-Where an image mode host built from a vendor bootc base image, carrying the stock package from Microsoft's own repository, falls between those two statements is a question for Microsoft. It is noted here as open.
+Where an image mode host built from a vendor bootc base image, carrying the stock package from Microsoft's own repository, falls between those two statements is a question only Microsoft can answer. Ask it before a deployment depends on the answer rather than after, and get the answer in writing. This repository is a demonstration that the agent runs, which is a narrower claim than it may look.
 
 ## References
 
