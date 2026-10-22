@@ -2,15 +2,17 @@
 
 A worked example of building Microsoft Defender for Endpoint on Linux (`mdatp`) into a bootable container image, and the verification steps that show it running.
 
+If you came here knowing Defender but not [bootc](https://bootc.dev/): bootc is a way of shipping and updating a Linux host as a container image. You define the operating system in a Containerfile, build it like any other image, and the host boots from it and updates by pulling a new one. Red Hat ships this as image mode for RHEL. The practical consequence for agent software is that `/usr` and `/opt` are read-only at runtime and software is installed at image build time rather than on the running machine, which is why installing an agent needs a little more thought than `dnf install`.
+
 ## Status, read this first
 
-This is **unofficial**. It is not a Red Hat supported configuration, it is not a Microsoft supported configuration, and it carries no commitment from either vendor. It is a reproducible example published so that people evaluating image mode with Defender in the picture have something concrete to start from and to argue with.
+This is **unofficial**. It is not a Red Hat supported configuration, it is not a Microsoft supported configuration, and it is not published by, reviewed by, or endorsed by either company. It carries no commitment from either vendor. It is a reproducible example published so that people evaluating image mode with Defender in the picture have something concrete to start from and to argue with.
 
 Everything here was built and booted on the **CentOS Stream 9 and CentOS Stream 10 bootc base images**, not on Red Hat Enterprise Linux. Stream was used because it needs no build-time subscription entitlement. The Microsoft package is the same one in both cases, installed from Microsoft's own RHEL 9 and RHEL 10 repositories, but a Stream result is not a RHEL result and should not be read as one. See [Not verified](#not-verified) below.
 
 ## What this demonstrates
 
-Two Containerfiles, one for each major version:
+A Containerfile for each RHEL major version:
 
 | File | Base image | Microsoft repo |
 |---|---|---|
@@ -324,5 +326,20 @@ bootc and image mode:
 - [bootc documentation](https://bootc-dev.github.io/bootc/)
 - [Using image mode for RHEL to build, deploy, and manage operating systems](https://docs.redhat.com/)
 - [bcvk](https://github.com/bootc-dev/bcvk), used for the install-to-disk step
+
+## Contributing
+
+Corrections are welcome as an issue or a pull request, particularly from anyone who has run this on RHEL proper, with a license, or at scale. If something here is wrong, saying so is more useful than working around it quietly.
+
+## License
+
+This repository uses two licenses, matching the convention used in the [bootc integration guide](https://github.com/marrusl/bootc-integration-guide):
+
+- **The prose** (this README) is licensed under [CC BY 4.0](LICENSE-DOCS).
+- **The Containerfiles, unit files, scripts, and configuration files** are licensed under the [Apache License 2.0](LICENSE).
+
+See [LICENSE-DOCS](LICENSE-DOCS) and [LICENSE](LICENSE) for the full terms.
+
+---
 
 Microsoft, Microsoft Defender, and Defender for Endpoint are trademarks of Microsoft Corporation. Red Hat and Red Hat Enterprise Linux are trademarks of Red Hat, Inc. This repository is not affiliated with or endorsed by either.

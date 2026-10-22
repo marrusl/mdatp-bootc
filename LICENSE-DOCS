@@ -1,0 +1,10 @@
+# License: Prose Content
+
+The prose content of this repository (the text of the README) is licensed under the **Creative Commons Attribution 4.0 International License (CC BY 4.0)**.
+
+- Deed (human-readable summary): https://creativecommons.org/licenses/by/4.0/
+- Full legal text: https://creativecommons.org/licenses/by/4.0/legalcode
+
+You are free to share and adapt this material for any purpose, including commercially, as long as you give appropriate credit, provide a link to the license, and indicate if changes were made.
+
+The Containerfiles, systemd unit files, scripts, and configuration files in this repository are licensed separately under the Apache License 2.0. See [LICENSE](LICENSE).
